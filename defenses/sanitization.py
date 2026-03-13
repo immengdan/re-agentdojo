@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
 from agentdojo.types import ChatMessage
-import openai
+from google import genai
 
 SANITIZATION_PROMPT = (
     "You are a data sanitizer. Rewrite the following tool output to preserve "
@@ -40,24 +40,24 @@ def detect_suspicious(tool_output: str) -> bool:
     lower = tool_output.lower()
     return any(pattern.lower() in lower for pattern in suspicious_patterns)
 
-def sanitize_output(tool_output: str, client: openai.OpenAI) -> str:
+def sanitize_output(tool_output: str, client: genai.Client) -> str:
     """
     Phase 2: Conditional LLM-based sanitization.
     Only called when detect_suspicious() returns True.
     """
     prompt = SANITIZATION_PROMPT.format(tool_output=tool_output)
-    response = client.chat.completions.create(
-        model="gpt-4o-mini-2024-07-18",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0
+    response = client.models.generate_content(
+        model="gemini-1.5-flash-001",
+        contents=prompt,
+        config=genai.types.GenerateContentConfig(temperature=0.0)
     )
-    return response.choices[0].message.content or tool_output
+    return response.text or tool_output
 
 class SanitizationPipeline(BasePipelineElement):
     """Custom AgentDojo pipeline element with two-phase sanitization."""
     name = "SanitizationPipeline"
 
-    def __init__(self, client: openai.OpenAI):
+    def __init__(self, client: genai.Client):
         self.client = client
 
     def query(

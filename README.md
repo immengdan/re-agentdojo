@@ -4,14 +4,14 @@
 **Semester:** Spring 2026
 ## Overview
 Evaluating and improving defenses against prompt injection attacks for tool-using LLM agents, using the [AgentDojo](https://github.com/ethz-spylab/agentdojo) benchmark (Debenedetti et al., NeurIPS 2024).
-**Goal:** Reproduce baseline results on the Workspace suite with GPT-4o-mini, then implement and compare two lightweight defenses:
+**Goal:** Reproduce baseline results on the Workspace suite with Gemini-1.5-Flash, then implement and compare two lightweight defenses:
 1. **Boundary formatting** — wrap tool outputs with untrusted-data delimiters
 2. **Cost-optimized sanitization** — two-phase detection + conditional LLM rewrite
 ## Quick Start
 ```bash
 # 1. Setup
 pip install -r requirements.txt
-export OPENAI_API_KEY="sk-..."
+export GEMINI_API_KEY="..."
 # 2. Run baseline (no attack)
 bash scripts/run_baseline.sh
 # 3. Run with attack
@@ -40,7 +40,7 @@ bash scripts/run_attack.sh
 | 3 | Boundary formatting | tool_knowledge | Defense 1 evaluation |
 | 4 | Sanitization | tool_knowledge | Defense 2 evaluation |
 ## Model
-- **GPT-4o-mini** (`gpt-4o-mini-2024-07-18`)
+- **Gemini-1.5-Flash** (`gemini-1.5-flash-001`)
 - Workspace suite, 10 user tasks (user_task_0 through user_task_9)
 ## References
 - Debenedetti et al., "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents", NeurIPS 2024. [Paper](https://arxiv.org/abs/2406.13352) | [Code](https://github.com/ethz-spylab/agentdojo)

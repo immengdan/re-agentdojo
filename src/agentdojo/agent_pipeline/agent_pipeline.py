@@ -276,7 +276,9 @@ class AgentPipeline(BasePipelineElement):
             return pipeline
         if config.defense == "sanitization":
             import defenses.sanitization as sn
-            client = openai.OpenAI()
+            from google import genai
+            import os
+            client = genai.Client()
             sanitization_component = sn.SanitizationPipeline(client)
             tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=tool_output_formatter), sanitization_component, llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])

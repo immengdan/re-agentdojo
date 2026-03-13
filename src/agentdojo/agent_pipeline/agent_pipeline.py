@@ -45,6 +45,8 @@ DEFENSES = [
     "transformers_pi_detector",
     "spotlighting_with_delimiting",
     "repeat_user_prompt",
+    "boundary_formatting",
+    "sanitization",
 ]
 """Available defenses."""
 
@@ -259,6 +261,24 @@ class AgentPipeline(BasePipelineElement):
             )
             delimited_tool_output_formatter = lambda result: f"<<{tool_output_formatter(result)}>>"
             tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter), llm])
+            pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.name = f"{llm_name}-{config.defense}"
+            return pipeline
+        if config.defense == "boundary_formatting":
+            import defenses.boundary_formatting as bf
+            system_message_component.system_message = (
+                f"{config.system_message} {bf.SYSTEM_INSTRUCTION}"
+            )
+            delimited_tool_output_formatter = lambda result: bf.format_tool_output(tool_output_formatter(result))
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter), llm])
+            pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.name = f"{llm_name}-{config.defense}"
+            return pipeline
+        if config.defense == "sanitization":
+            import defenses.sanitization as sn
+            client = openai.OpenAI()
+            sanitization_component = sn.SanitizationPipeline(client)
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=tool_output_formatter), sanitization_component, llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline

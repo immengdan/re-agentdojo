@@ -104,11 +104,11 @@ def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str
     elif provider == "google":
         import os
         if os.getenv("GEMINI_API_KEY"):
-            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"), http_options={'api_version': 'v1'})
         elif os.getenv("GCP_PROJECT"):
             client = genai.Client(vertexai=True, project=os.getenv("GCP_PROJECT"), location=os.getenv("GCP_LOCATION"))
         else:
-            client = genai.Client()
+            client = genai.Client(http_options={'api_version': 'v1'})
         llm = GoogleLLM(model, client)
     elif provider == "local":
         port = os.getenv("LOCAL_LLM_PORT", 8000)
@@ -284,7 +284,7 @@ class AgentPipeline(BasePipelineElement):
             import defenses.sanitization as sn
             from google import genai
             import os
-            client = genai.Client()
+            client = genai.Client(http_options={'api_version': 'v1'})
             sanitization_component = sn.SanitizationPipeline(client)
             tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=tool_output_formatter), sanitization_component, llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])

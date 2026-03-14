@@ -2,7 +2,7 @@
 # Run AgentDojo with Sanitization defense AND tool_knowledge attack
 # Usage: bash scripts/run_config_4.sh
 set -e
-MODEL="gemini-1.5-flash-001"
+MODEL="gemini-1.5-flash"
 SUITE="workspace"
 ATTACK="tool_knowledge"
 DEFENSE="sanitization"

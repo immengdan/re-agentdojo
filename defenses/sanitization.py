@@ -47,7 +47,7 @@ def sanitize_output(tool_output: str, client: genai.Client) -> str:
     """
     prompt = SANITIZATION_PROMPT.format(tool_output=tool_output)
     response = client.models.generate_content(
-        model="gemini-1.5-flash-001",
+        model="gemini-1.5-flash",
         contents=prompt,
         config=genai.types.GenerateContentConfig(temperature=0.0)
     )

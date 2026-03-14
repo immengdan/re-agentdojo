@@ -40,7 +40,7 @@ bash scripts/run_attack.sh
 | 3 | Boundary formatting | tool_knowledge | Defense 1 evaluation |
 | 4 | Sanitization | tool_knowledge | Defense 2 evaluation |
 ## Model
-- **Gemini-1.5-Flash** (`gemini-1.5-flash-001`)
+- **Gemini-1.5-Flash** (`gemini-1.5-flash`)
 - Workspace suite, 10 user tasks (user_task_0 through user_task_9)
 ## References
 - Debenedetti et al., "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents", NeurIPS 2024. [Paper](https://arxiv.org/abs/2406.13352) | [Code](https://github.com/ethz-spylab/agentdojo)

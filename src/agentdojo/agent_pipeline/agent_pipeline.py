@@ -103,7 +103,9 @@ def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str
         llm = CohereLLM(client, model)
     elif provider == "google":
         import os
-        if os.getenv("GCP_PROJECT"):
+        if os.getenv("GEMINI_API_KEY"):
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        elif os.getenv("GCP_PROJECT"):
             client = genai.Client(vertexai=True, project=os.getenv("GCP_PROJECT"), location=os.getenv("GCP_LOCATION"))
         else:
             client = genai.Client()

@@ -42,6 +42,8 @@ class ModelsEnum(StrEnum):
     """Gemini 1.5 Pro 001"""
     GEMINI_1_5_FLASH_002 = "gemini-1.5-flash-002"
     """Gemini 1.5 Flash 002"""
+    GEMINI_1_5_FLASH = "gemini-1.5-flash"
+    """Gemini 1.5 Flash"""
     GEMINI_1_5_FLASH_001 = "gemini-1.5-flash-001"
     """Gemini 1.5 Flash 001"""
     GEMINI_2_0_FLASH_EXP = "gemini-2.0-flash-exp"
@@ -77,6 +79,7 @@ MODEL_PROVIDERS = {
     ModelsEnum.LLAMA_3: "together-prompting",
     ModelsEnum.GEMINI_1_5_PRO_001: "google",
     ModelsEnum.GEMINI_1_5_PRO_002: "google",
+    ModelsEnum.GEMINI_1_5_FLASH: "google",
     ModelsEnum.GEMINI_1_5_FLASH_001: "google",
     ModelsEnum.GEMINI_1_5_FLASH_002: "google",
     ModelsEnum.GEMINI_2_0_FLASH_EXP: "google",
@@ -108,6 +111,7 @@ MODEL_NAMES = {
     "gemini-1.5-pro-002": "AI model developed by Google",
     "gemini-1.5-pro-001": "AI model developed by Google",
     "gemini-1.5-flash-002": "AI model developed by Google",
+    "gemini-1.5-flash": "AI model developed by Google",
     "gemini-1.5-flash-001": "AI model developed by Google",
     "gemini-2.0-flash-exp": "AI model developed by Google",
     "gemini-2.0-flash-001": "AI model developed by Google",

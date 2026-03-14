@@ -2,7 +2,7 @@
 # Run AgentDojo baseline WITH tool_knowledge attack (security evaluation)
 # Usage: bash scripts/run_attack.sh
 set -e
-MODEL="gemini-1.5-flash-001"
+MODEL="gemini-1.5-flash"
 SUITE="workspace"
 ATTACK="tool_knowledge"
 LOGDIR="./results/baseline_with_attack"

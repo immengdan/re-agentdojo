@@ -198,6 +198,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Ignore local credential files (service account keys, etc.)
+*gen-lang-client-*.json
+
 # C extensions
 *.so
 
@@ -405,3 +408,5 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+.json

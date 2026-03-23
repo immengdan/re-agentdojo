@@ -2,7 +2,8 @@
 # Run AgentDojo with Boundary Formatting defense AND tool_knowledge attack
 # Usage: bash scripts/run_config_3.sh
 set -e
-MODEL="gemini-1.5-flash"
+MODEL="gemini-2.5-flash"
+#MODEL="gpt-3.5-turbo-0125"
 SUITE="workspace"
 ATTACK="tool_knowledge"
 DEFENSE="boundary_formatting"

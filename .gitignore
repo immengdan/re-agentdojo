@@ -407,6 +407,4 @@ Thumbs.db
 .idea/
 
 # results (keep locally, don't push .json files)
-results/**/.json
-
-results/baseline_no_attack/gemini-2.5-flash/workspace/user_task_0/none/none.json
+results/

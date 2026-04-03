@@ -2,8 +2,8 @@
 # Run AgentDojo baseline WITH tool_knowledge attack (security evaluation)
 # Usage: bash scripts/run_attack.sh
 set -e
-#MODEL="gemini-2.5-flash"
-MODEL="gpt-3.5-turbo-0125"
+MODEL="GEMINI_2_5_FLASH"
+#MODEL="GEMINI_1_5_FLASH"
 SUITE="workspace"
 ATTACK="tool_knowledge"
 LOGDIR="./results/baseline_with_attack"
@@ -14,7 +14,7 @@ echo "Suite:  $SUITE"
 echo "Attack: $ATTACK"
 echo "Logdir: $LOGDIR"
 echo ""
-python -m agentdojo.scripts.benchmark \
+PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agentdojo.scripts.benchmark \
     -s "$SUITE" \
     $TASKS \
     --model "$MODEL" \

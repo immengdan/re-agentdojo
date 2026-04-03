@@ -2,19 +2,20 @@
 # Run AgentDojo baseline WITHOUT attacks (benign utility)
 # Usage: bash scripts/run_baseline.sh
 set -e
-#MODEL="gemini-2.5-flash"
-MODEL="gpt-3.5-turbo-0125"
+MODEL="GEMINI_2_5_FLASH"
+#MODEL="GEMINI_1_5_FLASH"
 SUITE="workspace"
 LOGDIR="./results/baseline_no_attack"
-TASKS="-ut user_task_0 -ut user_task_1 -ut user_task_2 -ut user_task_3 -ut user_task_4 -ut user_task_5 -ut user_task_6 -ut user_task_7 -ut user_task_8 -ut user_task_9"
+
+# If no -ut/--user-task flags are provided, benchmark.py runs all available
+# user tasks for the selected suite.
 echo "=== AgentDojo Baseline (No Attack) ==="
 echo "Model:  $MODEL"
 echo "Suite:  $SUITE"
 echo "Logdir: $LOGDIR"
 echo ""
-python -m agentdojo.scripts.benchmark \
+PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agentdojo.scripts.benchmark \
     -s "$SUITE" \
-    $TASKS \
     --model "$MODEL" \
     --logdir "$LOGDIR"
 echo ""

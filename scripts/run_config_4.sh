@@ -2,7 +2,7 @@
 # Run AgentDojo with Sanitization defense AND tool_knowledge attack
 # Usage: bash scripts/run_config_4.sh
 set -e
-MODEL="gemini-1.5-flash"
+MODEL="GEMINI_2_5_FLASH"
 SUITE="workspace"
 ATTACK="tool_knowledge"
 DEFENSE="sanitization"
@@ -16,7 +16,7 @@ echo "Attack:  $ATTACK"
 echo "Logdir:  $LOGDIR"
 echo ""
 
-python -m agentdojo.scripts.benchmark \
+PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agentdojo.scripts.benchmark \
     -s "$SUITE" \
     $TASKS \
     --model "$MODEL" \

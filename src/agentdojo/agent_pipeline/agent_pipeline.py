@@ -102,7 +102,6 @@ def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str
         client = cohere.Client()
         llm = CohereLLM(client, model)
     elif provider == "google":
-        import os
         if os.getenv("GEMINI_API_KEY"):
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"), http_options={'api_version': 'v1'})
         elif os.getenv("GCP_PROJECT"):
@@ -281,9 +280,10 @@ class AgentPipeline(BasePipelineElement):
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         if config.defense == "sanitization":
-            import defenses.sanitization as sn
             from google import genai
-            import os
+
+            import defenses.sanitization as sn
+
             client = genai.Client(http_options={'api_version': 'v1'})
             sanitization_component = sn.SanitizationPipeline(client)
             tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=tool_output_formatter), sanitization_component, llm])

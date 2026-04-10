@@ -9,10 +9,12 @@ Two-phase approach:
     suspicious outputs, reducing overall cost and latency.
 """
 from collections.abc import Sequence
+
+from google import genai
+
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
 from agentdojo.types import ChatMessage
-from google import genai
 
 SANITIZATION_PROMPT = (
     "You are a data sanitizer. Rewrite the following tool output to preserve "

@@ -5,15 +5,15 @@ Usage:
 TODO: Update paths and parsing once we have actual result formats from AgentDojo.
 """
 import json
-import os
 from pathlib import Path
+
 RESULTS_DIR = Path("results")
 CONFIGS = {
     "Baseline (no attack)": "baseline_no_attack",
     "Baseline + attack": "baseline_with_attack",
-    # "Formatting + attack": "formatting_with_attack",    # Week 10-11
-    # "Sanitization + attack": "sanitization_with_attack", # Week 12-13
 }
+
+
 def load_results(logdir: Path) -> dict:
     """
     Load benchmark results from a logdir.
@@ -37,9 +37,9 @@ def summarize(results: dict) -> dict:
     """
     return {
         "total_files": len(results),
-        # "benign_utility": ...,
-        # "targeted_asr": ...,
     }
+
+
 def main():
     print("=" * 60)
     print("AgentDojo Defense Comparison")

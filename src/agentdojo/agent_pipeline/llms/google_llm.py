@@ -164,7 +164,7 @@ def _message_to_google(message: ChatMessage) -> genai_types.Content:
             raise ValueError(f"Invalid role for Google: {message['role']}")
 
 
-def _is_retryable_client_error(exc: Exception) -> bool:
+def _is_retryable_client_error(exc: BaseException) -> bool:
     """Return True for ClientError instances that are likely transient.
 
     This is primarily used to retry when hitting Vertex AI rate / quota limits
@@ -182,6 +182,8 @@ def _is_retryable_client_error(exc: Exception) -> bool:
             code = error_info.get("code") or error_info.get("status")
         else:
             code = getattr(exc, "code", None) or getattr(exc, "status", None)
+        if code is None:
+            return True
         return int(code) in {429, 500, 502, 503, 504}
     except Exception:  # pragma: no cover
         return True

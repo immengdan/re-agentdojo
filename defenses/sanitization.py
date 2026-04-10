@@ -11,6 +11,7 @@ Two-phase approach:
 from collections.abc import Sequence
 
 from google import genai
+from google.genai import types as genai_types
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
@@ -51,7 +52,7 @@ def sanitize_output(tool_output: str, client: genai.Client) -> str:
     response = client.models.generate_content(
         model="gemini-1.5-flash",
         contents=prompt,
-        config=genai.types.GenerateContentConfig(temperature=0.0)
+        config=genai_types.GenerateContentConfig(temperature=0.0)
     )
     return response.text or tool_output
 

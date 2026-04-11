@@ -1,5 +1,7 @@
 from ast import literal_eval
 from collections.abc import Callable, Sequence
+import json
+import re
 
 import yaml
 from pydantic import BaseModel
@@ -9,6 +11,98 @@ from agentdojo.agent_pipeline.llms.google_llm import EMPTY_FUNCTION_NAME
 from agentdojo.functions_runtime import EmptyEnv, Env, FunctionReturnType, FunctionsRuntime
 from agentdojo.logging import Logger
 from agentdojo.types import ChatMessage, ChatToolResultMessage, text_content_block_from_string
+
+
+class ExecutionGuard:
+    """Hard runtime guard that blocks risky tool calls using untrusted argument provenance."""
+
+    def __init__(
+        self,
+        high_impact_tools: set[str] | None = None,
+        high_impact_keywords: set[str] | None = None,
+    ) -> None:
+        self.high_impact_tools = high_impact_tools or {"send_email", "delete_file", "send_money"}
+        self.high_impact_keywords = high_impact_keywords or {"transfer", "wire"}
+
+    def should_block(
+        self,
+        tool_name: str,
+        arguments: dict,
+        untrusted_snippets: set[str],
+    ) -> tuple[bool, str]:
+        if not self._is_high_impact_tool(tool_name):
+            return False, ""
+
+        flat_values = self._flatten_argument_values(arguments)
+        for value in flat_values:
+            normalized_value = self._normalize(value)
+            if not normalized_value:
+                continue
+            for snippet in untrusted_snippets:
+                if snippet and snippet in normalized_value:
+                    return (
+                        True,
+                        "Blocked by ExecutionGuard: high-impact tool arguments appear to originate "
+                        "from untrusted tool output. Require explicit user confirmation or trusted source.",
+                    )
+        return False, ""
+
+    def extract_untrusted_snippets(self, content_blocks: list[dict] | None) -> set[str]:
+        if not content_blocks:
+            return set()
+        extracted = []
+        for block in content_blocks:
+            if block.get("type") != "text":
+                continue
+            content = block.get("content", "")
+            if isinstance(content, str):
+                extracted.extend(self._candidate_snippets_from_text(content))
+        return set(extracted)
+
+    def _is_high_impact_tool(self, tool_name: str) -> bool:
+        lower = tool_name.lower()
+        if lower in self.high_impact_tools:
+            return True
+        return any(keyword in lower for keyword in self.high_impact_keywords)
+
+    def _flatten_argument_values(self, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, (int, float, bool)):
+            return [str(value)]
+        if isinstance(value, list):
+            flattened: list[str] = []
+            for item in value:
+                flattened.extend(self._flatten_argument_values(item))
+            return flattened
+        if isinstance(value, dict):
+            flattened = []
+            for item in value.values():
+                flattened.extend(self._flatten_argument_values(item))
+            return flattened
+        return [json.dumps(value, default=str)]
+
+    def _normalize(self, value: str) -> str:
+        return " ".join(value.lower().split())
+
+    def _candidate_snippets_from_text(self, text: str) -> list[str]:
+        snippets = []
+        for line in text.splitlines():
+            normalized = self._normalize(line)
+            if 8 <= len(normalized) <= 220:
+                snippets.append(normalized)
+
+        # Preserve token-level provenance markers that are commonly reused in risky calls.
+        email_pattern = r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
+        snippets.extend(self._normalize(match) for match in re.findall(email_pattern, text))
+
+        if len(snippets) == 0:
+            normalized = self._normalize(text)
+            if normalized:
+                snippets.append(normalized[:220])
+        return snippets[:20]
 
 
 def is_string_list(s: str):
@@ -52,8 +146,13 @@ class ToolsExecutor(BasePipelineElement):
             converts the output to structured YAML.
     """
 
-    def __init__(self, tool_output_formatter: Callable[[FunctionReturnType], str] = tool_result_to_str) -> None:
+    def __init__(
+        self,
+        tool_output_formatter: Callable[[FunctionReturnType], str] = tool_result_to_str,
+        execution_guard: ExecutionGuard | None = None,
+    ) -> None:
         self.output_formatter = tool_output_formatter
+        self.execution_guard = execution_guard
 
     def query(
         self,
@@ -71,6 +170,14 @@ class ToolsExecutor(BasePipelineElement):
             return query, runtime, env, messages, extra_args
 
         tool_call_results = []
+        guard_state = extra_args.setdefault("_execution_guard", {"untrusted_snippets": set()})
+        if self.execution_guard is not None:
+            prior_tool_messages = [m for m in messages if m["role"] == "tool"]
+            for message in prior_tool_messages:
+                content = message.get("content")
+                if isinstance(content, list):
+                    guard_state["untrusted_snippets"].update(self.execution_guard.extract_untrusted_snippets(content))
+
         for tool_call in messages[-1]["tool_calls"]:
             if tool_call.function == EMPTY_FUNCTION_NAME:
                 tool_call_results.append(
@@ -100,13 +207,34 @@ class ToolsExecutor(BasePipelineElement):
                 if isinstance(arg_v, str) and is_string_list(arg_v):
                     tool_call.args[arg_k] = literal_eval(arg_v)
 
+            if self.execution_guard is not None:
+                should_block, reason = self.execution_guard.should_block(
+                    tool_call.function,
+                    dict(tool_call.args),
+                    guard_state["untrusted_snippets"],
+                )
+                if should_block:
+                    tool_call_results.append(
+                        ChatToolResultMessage(
+                            role="tool",
+                            content=[text_content_block_from_string("")],
+                            tool_call_id=tool_call.id,
+                            tool_call=tool_call,
+                            error=reason,
+                        )
+                    )
+                    continue
+
             tool_call_result, error = runtime.run_function(env, tool_call.function, tool_call.args)
             tool_call_id = tool_call.id
             formatted_tool_call_result = self.output_formatter(tool_call_result)
+            content_blocks = [text_content_block_from_string(formatted_tool_call_result)]
+            if self.execution_guard is not None:
+                guard_state["untrusted_snippets"].update(self.execution_guard.extract_untrusted_snippets(content_blocks))
             tool_call_results.append(
                 ChatToolResultMessage(
                     role="tool",
-                    content=[text_content_block_from_string(formatted_tool_call_result)],
+                    content=content_blocks,
                     tool_call_id=tool_call_id,
                     tool_call=tool_call,
                     error=error,

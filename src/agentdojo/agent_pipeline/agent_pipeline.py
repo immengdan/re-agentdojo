@@ -25,6 +25,7 @@ from agentdojo.agent_pipeline.llms.openai_llm import OpenAILLM, OpenAILLMToolFil
 from agentdojo.agent_pipeline.llms.prompting_llm import PromptingLLM
 from agentdojo.agent_pipeline.pi_detector import TransformersBasedPIDetector
 from agentdojo.agent_pipeline.tool_execution import (
+    ExecutionGuard,
     ToolsExecutionLoop,
     ToolsExecutor,
     tool_result_to_str,
@@ -206,13 +207,18 @@ class AgentPipeline(BasePipelineElement):
         else:
             tool_output_formatter = tool_result_to_str
 
+        execution_guard = ExecutionGuard(
+            high_impact_tools={"send_email", "delete_file", "send_money"},
+            high_impact_keywords={"transfer", "wire"},
+        )
+
         if config.defense is None:
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter, execution_guard=execution_guard), llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = llm_name
             return pipeline
         if config.defense == "tool_filter":
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter, execution_guard=execution_guard), llm])
             if not isinstance(llm, OpenAILLM):
                 raise ValueError("Tool filter is only supported for OpenAI models")
             if llm_name is None:
@@ -231,7 +237,7 @@ class AgentPipeline(BasePipelineElement):
         if config.defense == "transformers_pi_detector":
             tools_loop = ToolsExecutionLoop(
                 [
-                    ToolsExecutor(tool_output_formatter),
+                    ToolsExecutor(tool_output_formatter, execution_guard=execution_guard),
                     TransformersBasedPIDetector(
                         model_name="protectai/deberta-v3-base-prompt-injection-v2",
                         safe_label="SAFE",
@@ -253,7 +259,7 @@ class AgentPipeline(BasePipelineElement):
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         if config.defense == "repeat_user_prompt":
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), InitQuery(), llm])
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter, execution_guard=execution_guard), InitQuery(), llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
@@ -265,7 +271,9 @@ class AgentPipeline(BasePipelineElement):
                 "between those symbols."
             )
             delimited_tool_output_formatter = lambda result: f"<<{tool_output_formatter(result)}>>"
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop(
+                [ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter, execution_guard=execution_guard), llm]
+            )
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
@@ -275,18 +283,24 @@ class AgentPipeline(BasePipelineElement):
                 f"{config.system_message} {bf.SYSTEM_INSTRUCTION}"
             )
             delimited_tool_output_formatter = lambda result: bf.format_tool_output(tool_output_formatter(result))
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop(
+                [ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter, execution_guard=execution_guard), llm]
+            )
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         if config.defense == "sanitization":
-            from google import genai
-
             import defenses.sanitization as sn
 
-            client = genai.Client(http_options={'api_version': 'v1'})
+            client = openai.OpenAI()
             sanitization_component = sn.SanitizationPipeline(client)
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=tool_output_formatter), sanitization_component, llm])
+            tools_loop = ToolsExecutionLoop(
+                [
+                    ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard),
+                    sanitization_component,
+                    llm,
+                ]
+            )
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline

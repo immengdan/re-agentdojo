@@ -1,4 +1,6 @@
 import json
+import math
+import os
 from collections.abc import Sequence
 from typing import overload
 
@@ -34,15 +36,38 @@ from agentdojo.types import (
 )
 
 
+OPENAI_RETRY_ATTEMPTS = int(os.getenv("AGENTDOJO_OPENAI_RETRY_ATTEMPTS", "8"))
+OPENAI_RETRY_MAX_WAIT_SECONDS = int(os.getenv("AGENTDOJO_OPENAI_RETRY_MAX_WAIT_SECONDS", "120"))
+
+
+def _sanitize_str_for_json(value: str) -> str:
+    # Replace invalid Unicode code points so HTTP JSON payload remains parseable.
+    return value.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _sanitize_for_json(value):
+    if isinstance(value, str):
+        return _sanitize_str_for_json(value)
+    if isinstance(value, float):
+        # JSON does not allow NaN/Infinity.
+        return value if math.isfinite(value) else None
+    if isinstance(value, list):
+        return [_sanitize_for_json(item) for item in value]
+    if isinstance(value, dict):
+        return {_sanitize_for_json(k): _sanitize_for_json(v) for k, v in value.items()}
+    return value
+
+
 def _tool_call_to_openai(tool_call: FunctionCall) -> ChatCompletionMessageToolCallParam:
     if tool_call.id is None:
         raise ValueError("`tool_call.id` is required for OpenAI")
+    safe_args = _sanitize_for_json(tool_call.args)
     return ChatCompletionMessageToolCallParam(
         id=tool_call.id,
         type="function",
         function={
             "name": tool_call.function,
-            "arguments": json.dumps(tool_call.args),
+            "arguments": json.dumps(safe_args, ensure_ascii=False, allow_nan=False),
         },
     )
 
@@ -71,7 +96,10 @@ def _content_blocks_to_openai_content_blocks(
 ) -> list[ChatCompletionContentPartTextParam] | None:
     if message["content"] is None:
         return None
-    return [ChatCompletionContentPartTextParam(type="text", text=el["content"] or "") for el in message["content"]]
+    return [
+        ChatCompletionContentPartTextParam(type="text", text=_sanitize_str_for_json(el["content"] or ""))
+        for el in message["content"]
+    ]
 
 
 def _message_to_openai(message: ChatMessage, model_name: str) -> ChatCompletionMessageParam:
@@ -141,8 +169,8 @@ def _function_to_openai(f: Function) -> ChatCompletionToolParam:
 
 
 @retry(
-    wait=wait_random_exponential(multiplier=1, max=40),
-    stop=stop_after_attempt(3),
+    wait=wait_random_exponential(multiplier=1, max=OPENAI_RETRY_MAX_WAIT_SECONDS),
+    stop=stop_after_attempt(OPENAI_RETRY_ATTEMPTS),
     reraise=True,
     retry=retry_if_not_exception_type((openai.BadRequestError, openai.UnprocessableEntityError)),
 )
@@ -154,7 +182,7 @@ def chat_completion_request(
     reasoning_effort: ChatCompletionReasoningEffort | None,
     temperature: float | None = 0.0,
 ):
-    return client.chat.completions.create(
+    return client.with_options(max_retries=0).chat.completions.create(
         model=model,
         messages=messages,
         tools=tools or NOT_GIVEN,

@@ -2,8 +2,8 @@
 # Run AgentDojo baseline WITHOUT attacks (benign utility)
 # Usage: bash scripts/run_baseline.sh
 set -e
-MODEL="GEMINI_2_5_FLASH"
-#MODEL="GEMINI_1_5_FLASH"
+MODEL="GPT_4O_MINI_2024_07_18"
+#MODEL="GPT_4O_2024_05_13"
 SUITE="workspace"
 LOGDIR="./results/baseline_no_attack"
 

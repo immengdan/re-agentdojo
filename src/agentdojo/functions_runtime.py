@@ -205,7 +205,7 @@ class DualGuardMiddleware:
         self,
         runtime: FunctionsRuntime | None = None,
         *,
-        risk_threshold: float = 0.65,
+        risk_threshold: float = 0.30,
         session_id: str | None = None,
         enable_inbound_boundary: bool = True,
         enable_outbound_fal: bool = True,

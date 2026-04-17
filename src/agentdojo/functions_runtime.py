@@ -1,5 +1,11 @@
+from __future__ import annotations
+
 import dataclasses
+import html
 import inspect
+import logging
+import re
+import secrets
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from typing import Annotated, Any, Concatenate, Generic, TypeAlias, get_origin, get_type_hints, overload
 
@@ -175,6 +181,235 @@ class ToolNotFoundError(Exception):
     ...
 
 
+class DualGuardMiddleware:
+    """Centralized dual-defense middleware for user queries and tool outputs."""
+
+    CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+    ATTACK_KEYWORD_PATTERN = re.compile(
+        r"(?i)\b("  # case-insensitive blocklist of common injection phrases
+        r"ignore(?:\s+all)?\s+previous(?:\s+instructions?)?"
+        r"|system\s+prompt"
+        r"|developer\s+message"
+        r"|jailbreak"
+        r"|prompt\s+injection"
+        r"|disregard"
+        r"|override"
+        r"|bypass"
+        r"|reveal"
+        r"|exfiltrate"
+        r")\b"
+    )
+    VOWEL_PATTERN = re.compile(r"[aeiouAEIOU]")
+
+    def __init__(
+        self,
+        runtime: FunctionsRuntime | None = None,
+        *,
+        risk_threshold: float = 0.65,
+        session_id: str | None = None,
+        enable_inbound_boundary: bool = True,
+        enable_outbound_fal: bool = True,
+    ) -> None:
+        self.runtime = runtime
+        self.risk_threshold = risk_threshold
+        self.session_id = session_id or f"GUARD_ID_{secrets.token_hex(4).upper()}"
+        self.enable_inbound_boundary = enable_inbound_boundary
+        self.enable_outbound_fal = enable_outbound_fal
+        self.audit_log: list[dict[str, Any]] = []
+        self.logger = logging.getLogger(__name__)
+
+    def attach_runtime(self, runtime: FunctionsRuntime) -> None:
+        """Attach the middleware to a runtime after initialization."""
+        self.runtime = runtime
+
+    def wrap_user_query(self, query: str) -> str:
+        """Escape and wrap inbound user input in a session-specific XML envelope."""
+        if not self.enable_inbound_boundary:
+            return query
+
+        escaped_query = html.escape(query, quote=True)
+        wrapped_query = (
+            f'<dual_guard session="{self.session_id}">'
+            f"<user_query>{escaped_query}</user_query>"
+            f"</dual_guard>"
+        )
+        self._record_audit(
+            direction="inbound",
+            before=query,
+            after=wrapped_query,
+            function_name=None,
+            arguments=None,
+            risk_score=None,
+        )
+        return wrapped_query
+
+    def protect_user_query(self, query: str) -> str:
+        """Alias for wrapping user input before it enters the agent loop."""
+        return self.wrap_user_query(query)
+
+    def execute(
+        self,
+        env: TaskEnvironment | None,
+        function: str,
+        kwargs: Mapping[str, FunctionCallArgTypes],
+        raise_on_error: bool = False,
+    ) -> tuple[FunctionReturnType, str | None]:
+        """Execute a function through the dual guard and return the guarded result."""
+        if self.runtime is None:
+            raise ValueError("DualGuardMiddleware requires an attached FunctionsRuntime.")
+
+        if not self.enable_outbound_fal:
+            return self.runtime._execute_function(env, function, kwargs, raise_on_error=raise_on_error)
+
+        before_text = self._stringify_for_audit(kwargs)
+        self._record_audit(
+            direction="outbound",
+            before=before_text,
+            after=None,
+            function_name=function,
+            arguments=dict(kwargs),
+            risk_score=None,
+        )
+
+        result, error = self.runtime._execute_function(env, function, kwargs, raise_on_error=raise_on_error)
+        if error is not None:
+            self._record_audit(
+                direction="outbound",
+                before=before_text,
+                after=self._stringify_for_audit(result),
+                function_name=function,
+                arguments=dict(kwargs),
+                risk_score=None,
+                error=error,
+            )
+            return result, error
+
+        guarded_result, risk_score = self._guard_tool_output(result)
+        after_text = self._stringify_for_audit(guarded_result)
+        self._record_audit(
+            direction="outbound",
+            before=self._stringify_for_audit(result),
+            after=after_text,
+            function_name=function,
+            arguments=dict(kwargs),
+            risk_score=risk_score,
+        )
+        return guarded_result, None
+
+    def run_function(
+        self,
+        env: TaskEnvironment | None,
+        function: str,
+        kwargs: Mapping[str, FunctionCallArgTypes],
+        raise_on_error: bool = False,
+    ) -> tuple[FunctionReturnType, str | None]:
+        """Compatibility alias that routes function execution through the middleware."""
+        return self.execute(env, function, kwargs, raise_on_error=raise_on_error)
+
+    def detect_imperative_tone(self, text: str) -> float:
+        """Placeholder semantic detector that returns a risk score between 0 and 1."""
+        lowered = text.lower()
+        risk_score = 0.0
+        if self.ATTACK_KEYWORD_PATTERN.search(lowered):
+            risk_score += 0.45
+        if re.search(r"\b(?:please\s+)?(?:do|follow|run|send|delete|ignore|override|reveal|explain)\b", lowered):
+            risk_score += 0.30
+        if re.search(r"\b(?:now|immediately|quickly|urgently|must|required)\b", lowered):
+            risk_score += 0.15
+        if "!" in text:
+            risk_score += 0.05
+        if len(text) > 240:
+            risk_score += 0.05
+        return min(risk_score, 1.0)
+
+    def _guard_tool_output(self, output: FunctionReturnType) -> tuple[FunctionReturnType, float | None]:
+        if isinstance(output, str):
+            lexical = self._lexical_sanitize(output)
+            risk_score = self.detect_imperative_tone(lexical)
+            if risk_score > self.risk_threshold:
+                return self._fal_encode(lexical), risk_score
+            return lexical, risk_score
+
+        if isinstance(output, BaseModel):
+            transformed_model = self._transform_base_model(output)
+            return transformed_model, self.detect_imperative_tone(self._stringify_for_audit(transformed_model))
+
+        if isinstance(output, list):
+            transformed_list = [self._transform_nested_value(item) for item in output]
+            return transformed_list, self.detect_imperative_tone(self._stringify_for_audit(transformed_list))
+
+        if isinstance(output, tuple):
+            transformed_tuple = tuple(self._transform_nested_value(item) for item in output)
+            return transformed_tuple, self.detect_imperative_tone(self._stringify_for_audit(transformed_tuple))
+
+        if isinstance(output, dict):
+            transformed_dict = {key: self._transform_nested_value(value) for key, value in output.items()}
+            return transformed_dict, self.detect_imperative_tone(self._stringify_for_audit(transformed_dict))
+
+        output_text = self._lexical_sanitize(str(output))
+        risk_score = self.detect_imperative_tone(output_text)
+        if risk_score > self.risk_threshold:
+            return self._fal_encode(output_text), risk_score
+        return output, risk_score
+
+    def _transform_nested_value(self, value: Any) -> Any:
+        if isinstance(value, str):
+            lexical = self._lexical_sanitize(value)
+            if self.detect_imperative_tone(lexical) > self.risk_threshold:
+                return self._fal_encode(lexical)
+            return lexical
+        if isinstance(value, list):
+            return [self._transform_nested_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._transform_nested_value(item) for item in value)
+        if isinstance(value, dict):
+            return {key: self._transform_nested_value(item) for key, item in value.items()}
+        if isinstance(value, BaseModel):
+            return self._transform_base_model(value)
+        return value
+
+    def _transform_base_model(self, model: BaseModel) -> BaseModel:
+        update_data = {field_name: self._transform_nested_value(value) for field_name, value in model.model_dump().items()}
+        return model.model_copy(update=update_data)
+
+    def _lexical_sanitize(self, text: str) -> str:
+        without_control_chars = self.CONTROL_CHAR_PATTERN.sub(" ", text)
+        without_attack_keywords = self.ATTACK_KEYWORD_PATTERN.sub("[redacted]", without_control_chars)
+        return re.sub(r"\s+", " ", without_attack_keywords).strip()
+
+    def _fal_encode(self, text: str) -> str:
+        return self.VOWEL_PATTERN.sub("_", text)
+
+    def _stringify_for_audit(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        return repr(value)
+
+    def _record_audit(
+        self,
+        *,
+        direction: str,
+        before: str,
+        after: str | None,
+        function_name: str | None,
+        arguments: dict[str, Any] | None,
+        risk_score: float | None,
+        error: str | None = None,
+    ) -> None:
+        record = {
+            "direction": direction,
+            "before": before,
+            "after": after,
+            "function": function_name,
+            "arguments": arguments,
+            "risk_score": risk_score,
+            "error": error,
+            "session_id": self.session_id,
+        }
+        self.audit_log.append(record)
+        self.logger.info("DualGuardMiddleware audit record: %s", record)
+
+
 class FunctionsRuntime:
     """A runtime for functions.
 
@@ -182,8 +417,11 @@ class FunctionsRuntime:
         functions: A list of functions that the runtime has access to.
     """
 
-    def __init__(self, functions: Sequence[Function] = []) -> None:
+    def __init__(self, functions: Sequence[Function] = [], middleware: DualGuardMiddleware | None = None) -> None:
         self.functions: dict[str, Function] = {f.name: f for f in functions}
+        self.middleware = middleware
+        if self.middleware is not None:
+            self.middleware.attach_runtime(self)
 
     def __repr__(self) -> str:
         return f"FunctionsRuntime(functions={self.functions})"
@@ -243,7 +481,7 @@ class FunctionsRuntime:
                 )
         return updated_kwargs
 
-    def run_function(
+    def _execute_function(
         self,
         env: TaskEnvironment | None,
         function: str,
@@ -307,6 +545,34 @@ class FunctionsRuntime:
             if raise_on_error:
                 raise e
             return "", f"{type(e).__name__}: {e}"
+
+    def execute(
+        self,
+        env: TaskEnvironment | None,
+        function: str,
+        kwargs: Mapping[str, FunctionCallArgTypes],
+        raise_on_error: bool = False,
+    ) -> tuple[FunctionReturnType, str | None]:
+        """Execute a function, routing through middleware when configured."""
+        if self.middleware is not None:
+            return self.middleware.execute(env, function, kwargs, raise_on_error=raise_on_error)
+        return self._execute_function(env, function, kwargs, raise_on_error=raise_on_error)
+
+    def run_function(
+        self,
+        env: TaskEnvironment | None,
+        function: str,
+        kwargs: Mapping[str, FunctionCallArgTypes],
+        raise_on_error: bool = False,
+    ) -> tuple[FunctionReturnType, str | None]:
+        """Compatibility wrapper around `execute`."""
+        return self.execute(env, function, kwargs, raise_on_error=raise_on_error)
+
+    def protect_user_query(self, query: str) -> str:
+        """Wrap inbound user input when dual-guard middleware is configured."""
+        if self.middleware is None:
+            return query
+        return self.middleware.protect_user_query(query)
 
     def update_functions(self, new_functions: dict[str, Function]) -> None:
         self.functions = new_functions

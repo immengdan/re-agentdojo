@@ -4,7 +4,7 @@ import logging
 import os
 from collections.abc import Iterable, Sequence
 from functools import partial
-from typing import Literal
+from typing import Callable, Literal
 
 import anthropic
 import cohere
@@ -30,7 +30,7 @@ from agentdojo.agent_pipeline.tool_execution import (
     ToolsExecutor,
     tool_result_to_str,
 )
-from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
+from agentdojo.functions_runtime import DualGuardMiddleware, EmptyEnv, Env, FunctionsRuntime
 from agentdojo.logging import Logger
 from agentdojo.models import MODEL_PROVIDERS, ModelsEnum
 from agentdojo.types import ChatMessage
@@ -48,6 +48,7 @@ DEFENSES = [
     "repeat_user_prompt",
     "boundary_formatting",
     "sanitization",
+    "dual_guard",
 ]
 """Available defenses."""
 
@@ -72,7 +73,13 @@ def _get_local_model_id(port) -> str:
 
 def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str) -> BasePipelineElement:
     if provider == "openai":
-        client = openai.OpenAI()
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY must be set to use OpenAI models. "
+                "Set it in the environment or add it to a .env file before running the benchmark."
+            )
+        client = openai.OpenAI(api_key=api_key)
         llm = OpenAILLM(client, model)
     elif provider == "anthropic":
         client = anthropic.Anthropic()
@@ -172,6 +179,7 @@ class AgentPipeline(BasePipelineElement):
 
     def __init__(self, elements: Iterable[BasePipelineElement]) -> None:
         self.elements = elements
+        self.middleware_factory: Callable[[], DualGuardMiddleware] | None = None
 
     def query(
         self,
@@ -181,6 +189,11 @@ class AgentPipeline(BasePipelineElement):
         messages: Sequence[ChatMessage] = [],
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
+        if runtime.middleware is None and self.middleware_factory is not None:
+            middleware = self.middleware_factory()
+            middleware.attach_runtime(runtime)
+            runtime.middleware = middleware
+
         logger = Logger().get()
         for element in self.elements:
             query, runtime, env, messages, extra_args = element.query(query, runtime, env, messages, extra_args)
@@ -278,30 +291,42 @@ class AgentPipeline(BasePipelineElement):
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         if config.defense == "boundary_formatting":
-            import defenses.boundary_formatting as bf
-            system_message_component.system_message = (
-                f"{config.system_message} {bf.SYSTEM_INSTRUCTION}"
-            )
-            delimited_tool_output_formatter = lambda result: bf.format_tool_output(tool_output_formatter(result))
             tools_loop = ToolsExecutionLoop(
-                [ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter, execution_guard=execution_guard), llm]
+                [ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard), llm]
             )
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.middleware_factory = lambda: DualGuardMiddleware(
+                enable_inbound_boundary=True,
+                enable_outbound_fal=False,
+            )
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         if config.defense == "sanitization":
-            import defenses.sanitization as sn
-
-            client = openai.OpenAI()
-            sanitization_component = sn.SanitizationPipeline(client)
             tools_loop = ToolsExecutionLoop(
                 [
                     ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard),
-                    sanitization_component,
                     llm,
                 ]
             )
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.middleware_factory = lambda: DualGuardMiddleware(
+                enable_inbound_boundary=False,
+                enable_outbound_fal=True,
+            )
+            pipeline.name = f"{llm_name}-{config.defense}"
+            return pipeline
+        if config.defense == "dual_guard":
+            tools_loop = ToolsExecutionLoop(
+                [
+                    ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard),
+                    llm,
+                ]
+            )
+            pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.middleware_factory = lambda: DualGuardMiddleware(
+                enable_inbound_boundary=True,
+                enable_outbound_fal=True,
+            )
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         raise ValueError("Invalid defense name")

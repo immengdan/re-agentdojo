@@ -389,3 +389,22 @@ notebooks/plots/
 
 runs/
 .claude
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Results (large files — keep locally, don't push logs)
+results/*/logs/
+# Environment
+.env
+*.key
+# OS
+.DS_Store
+Thumbs.db
+# IDE
+.vscode/
+.idea/
+
+# results (keep locally, don't push .json files)
+results/

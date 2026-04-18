@@ -1,3 +1,54 @@
+# AgentDojo Defense Project
+**Course:** 14-795 AI Applications in Information Security
+**Team:** Mandy Li, Evie Hu
+**Semester:** Spring 2026
+## Overview
+Evaluating and improving defenses against prompt injection attacks for tool-using LLM agents, using the [AgentDojo](https://github.com/ethz-spylab/agentdojo) benchmark (Debenedetti et al., NeurIPS 2024).
+**Goal:** Reproduce baseline results on the Workspace suite with Gemini-2.5-Flash, then implement and compare two lightweight defenses:
+1. **Boundary formatting** — wrap tool outputs with untrusted-data delimiters
+2. **Cost-optimized sanitization** — two-phase detection + conditional LLM rewrite
+## Quick Start
+```bash
+# 1. Setup
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+export GEMINI_API_KEY="..."
+# 2. Run baseline (no attack)
+bash scripts/run_baseline.sh
+# 3. Run with attack
+bash scripts/run_attack.sh
+```
+## Project Structure
+```
+├── scripts/              # Benchmark run scripts
+│   ├── run_baseline.sh
+│   └── run_attack.sh
+├── results/              # Benchmark outputs (CSV + logs)
+│   ├── baseline_no_attack/
+│   └── baseline_with_attack/
+├── defenses/             # Custom defense implementations
+│   ├── boundary_formatting.py
+│   └── sanitization.py
+├── analysis/             # Result analysis and plotting
+│   └── compare_results.py
+└── report/               # Final report and figures
+```
+## Experiment Configurations
+| Config | Defense | Attack | Purpose |
+|--------|---------|--------|---------|
+| 1 | None | None | Benign utility baseline |
+| 2 | None | tool_knowledge | Security baseline |
+| 3 | Boundary formatting | tool_knowledge | Defense 1 evaluation |
+| 4 | Sanitization | tool_knowledge | Defense 2 evaluation |
+## Model
+- **Gemini-2.5-Flash** (`gemini-2.5-flash`)
+- Script default uses the enum name `GEMINI_2_5_FLASH`
+- Workspace suite, 10 user tasks (user_task_0 through user_task_9)
+## References
+- Debenedetti et al., "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents", NeurIPS 2024. [Paper](https://arxiv.org/abs/2406.13352) | [Code](https://github.com/ethz-spylab/agentdojo)
+- Greshake et al., "Not What You've Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection", 2023. [Paper](https://arxiv.org/abs/2302.12173)
+
 <center>
 
 # AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents

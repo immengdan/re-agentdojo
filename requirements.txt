@@ -1,0 +1,5 @@
+agentdojo
+openai
+pandas
+matplotlib
+google-genai

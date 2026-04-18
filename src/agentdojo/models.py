@@ -42,6 +42,8 @@ class ModelsEnum(StrEnum):
     """Gemini 1.5 Pro 001"""
     GEMINI_1_5_FLASH_002 = "gemini-1.5-flash-002"
     """Gemini 1.5 Flash 002"""
+    GEMINI_1_5_FLASH = "gemini-1.5-flash"
+    """Gemini 1.5 Flash"""
     GEMINI_1_5_FLASH_001 = "gemini-1.5-flash-001"
     """Gemini 1.5 Flash 001"""
     GEMINI_2_0_FLASH_EXP = "gemini-2.0-flash-exp"
@@ -52,6 +54,10 @@ class ModelsEnum(StrEnum):
     """Gemini 2.5 Flash Preview 04/17"""
     GEMINI_2_5_PRO_PREVIEW_05_06 = "gemini-2.5-pro-preview-05-06"
     """Gemini 2.5 Pro Preview 05/06"""
+    GEMINI_2_5_FLASH = "gemini-2.5-flash"
+    """Gemini 2.5 Flash"""
+    GEMINI_2_5_PRO = "gemini-2.5-pro"
+    """Gemini 2.5 Pro"""
     LOCAL = "local"
     """Local model"""
     VLLM_PARSED = "vllm_parsed"
@@ -77,12 +83,15 @@ MODEL_PROVIDERS = {
     ModelsEnum.LLAMA_3: "together-prompting",
     ModelsEnum.GEMINI_1_5_PRO_001: "google",
     ModelsEnum.GEMINI_1_5_PRO_002: "google",
+    ModelsEnum.GEMINI_1_5_FLASH: "google",
     ModelsEnum.GEMINI_1_5_FLASH_001: "google",
     ModelsEnum.GEMINI_1_5_FLASH_002: "google",
     ModelsEnum.GEMINI_2_0_FLASH_EXP: "google",
     ModelsEnum.GEMINI_2_0_FLASH_001: "google",
     ModelsEnum.GEMINI_2_5_FLASH_PREVIEW_04_17: "google",
     ModelsEnum.GEMINI_2_5_PRO_PREVIEW_05_06: "google",
+    ModelsEnum.GEMINI_2_5_FLASH: "google",
+    ModelsEnum.GEMINI_2_5_PRO: "google",
     ModelsEnum.LOCAL: "local",
     ModelsEnum.VLLM_PARSED: "vllm_parsed",
 }
@@ -108,11 +117,14 @@ MODEL_NAMES = {
     "gemini-1.5-pro-002": "AI model developed by Google",
     "gemini-1.5-pro-001": "AI model developed by Google",
     "gemini-1.5-flash-002": "AI model developed by Google",
+    "gemini-1.5-flash": "AI model developed by Google",
     "gemini-1.5-flash-001": "AI model developed by Google",
     "gemini-2.0-flash-exp": "AI model developed by Google",
     "gemini-2.0-flash-001": "AI model developed by Google",
     "gemini-2.5-flash-preview-04-17": "AI model developed by Google",
     "gemini-2.5-pro-preview-05-06": "AI model developed by Google",
+    "gemini-2.5-flash": "AI model developed by Google",
+    "gemini-2.5-pro": "AI model developed by Google",
     "local": "Local model",
     "vllm_parsed": "Local model",
 }

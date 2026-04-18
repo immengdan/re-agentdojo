@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types as genai_types
 from google.genai.errors import ClientError
 from pydantic import BaseModel
-from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_random_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_random_exponential
 from typing_extensions import deprecated
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
@@ -130,6 +130,13 @@ def _parts_from_assistant_message(assistant_message: ChatAssistantMessage) -> li
 
 def _message_to_google(message: ChatMessage) -> genai_types.Content:
     match message["role"]:
+        case "system":
+            # Vertex AI expects user/model/tool roles only; include system instructions as user text.
+            # This keeps the system prompt in the conversation while remaining compatible.
+            return genai_types.Content(
+                role="user",
+                parts=[genai_types.Part.from_text(text=f"System: {block['content']}") for block in message["content"]],
+            )
         case "user":
             return genai_types.Content(
                 role="user",
@@ -157,11 +164,36 @@ def _message_to_google(message: ChatMessage) -> genai_types.Content:
             raise ValueError(f"Invalid role for Google: {message['role']}")
 
 
+def _is_retryable_client_error(exc: BaseException) -> bool:
+    """Return True for ClientError instances that are likely transient.
+
+    This is primarily used to retry when hitting Vertex AI rate / quota limits
+    (HTTP 429 RESOURCE_EXHAUSTED) or other transient server-side issues.
+    """
+
+    if not isinstance(exc, ClientError):
+        return False
+
+    # The Google GenAI ClientError may include a dict `error` with a `code` field.
+    # If we can't determine, default to retrying.
+    try:
+        error_info = getattr(exc, "error", None)
+        if isinstance(error_info, dict):
+            code = error_info.get("code") or error_info.get("status")
+        else:
+            code = getattr(exc, "code", None) or getattr(exc, "status", None)
+        if code is None:
+            return True
+        return int(code) in {429, 500, 502, 503, 504}
+    except Exception:  # pragma: no cover
+        return True
+
+
 @retry(
     wait=wait_random_exponential(multiplier=1, max=40),
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(5),
     reraise=True,
-    retry=retry_if_not_exception_type(ClientError),
+    retry=retry_if_exception(_is_retryable_client_error),
 )
 def chat_completion_request(
     model: str,
@@ -268,24 +300,15 @@ class GoogleLLM(BasePipelineElement):
         messages: Sequence[ChatMessage] = [],
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
-        first_message, *other_messages = messages
-        if first_message["role"] == "system":
-            system_instruction = first_message["content"][0]["content"]
-        else:
-            system_instruction = None
-            other_messages = messages
-        google_messages = [_message_to_google(message) for message in other_messages]
+        # Vertex AI / Gemini does not support `systemInstruction` or `tools` fields
+        # in the `GenerateContentConfig` payload for the current API version.
+        # Instead, put the system content into the first message and omit tool metadata.
+        google_messages = [_message_to_google(message) for message in messages]
         google_messages = _merge_tool_result_messages(google_messages)
-        google_functions = [_function_to_google(tool) for tool in runtime.functions.values()]
-        google_tools: genai_types.ToolListUnion | None = (
-            [genai_types.Tool(function_declarations=google_functions)] if google_functions else None
-        )
 
         generation_config = genai_types.GenerateContentConfig(
             temperature=self.temperature,
             max_output_tokens=self.max_tokens,
-            tools=google_tools,
-            system_instruction=system_instruction,
         )
         completion = chat_completion_request(
             self.model,

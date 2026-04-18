@@ -4,7 +4,7 @@ import logging
 import os
 from collections.abc import Iterable, Sequence
 from functools import partial
-from typing import Literal
+from typing import Callable, Literal
 
 import anthropic
 import cohere
@@ -25,11 +25,12 @@ from agentdojo.agent_pipeline.llms.openai_llm import OpenAILLM, OpenAILLMToolFil
 from agentdojo.agent_pipeline.llms.prompting_llm import PromptingLLM
 from agentdojo.agent_pipeline.pi_detector import TransformersBasedPIDetector
 from agentdojo.agent_pipeline.tool_execution import (
+    ExecutionGuard,
     ToolsExecutionLoop,
     ToolsExecutor,
     tool_result_to_str,
 )
-from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
+from agentdojo.functions_runtime import DualGuardMiddleware, EmptyEnv, Env, FunctionsRuntime
 from agentdojo.logging import Logger
 from agentdojo.models import MODEL_PROVIDERS, ModelsEnum
 from agentdojo.types import ChatMessage
@@ -45,6 +46,9 @@ DEFENSES = [
     "transformers_pi_detector",
     "spotlighting_with_delimiting",
     "repeat_user_prompt",
+    "boundary_formatting",
+    "sanitization",
+    "dual_guard",
 ]
 """Available defenses."""
 
@@ -69,7 +73,13 @@ def _get_local_model_id(port) -> str:
 
 def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str) -> BasePipelineElement:
     if provider == "openai":
-        client = openai.OpenAI()
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY must be set to use OpenAI models. "
+                "Set it in the environment or add it to a .env file before running the benchmark."
+            )
+        client = openai.OpenAI(api_key=api_key)
         llm = OpenAILLM(client, model)
     elif provider == "anthropic":
         client = anthropic.Anthropic()
@@ -100,7 +110,12 @@ def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str
         client = cohere.Client()
         llm = CohereLLM(client, model)
     elif provider == "google":
-        client = genai.Client(vertexai=True, project=os.getenv("GCP_PROJECT"), location=os.getenv("GCP_LOCATION"))
+        if os.getenv("GEMINI_API_KEY"):
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"), http_options={'api_version': 'v1'})
+        elif os.getenv("GCP_PROJECT"):
+            client = genai.Client(vertexai=True, project=os.getenv("GCP_PROJECT"), location=os.getenv("GCP_LOCATION"))
+        else:
+            client = genai.Client(http_options={'api_version': 'v1'})
         llm = GoogleLLM(model, client)
     elif provider == "local":
         port = os.getenv("LOCAL_LLM_PORT", 8000)
@@ -164,6 +179,7 @@ class AgentPipeline(BasePipelineElement):
 
     def __init__(self, elements: Iterable[BasePipelineElement]) -> None:
         self.elements = elements
+        self.middleware_factory: Callable[[], DualGuardMiddleware] | None = None
 
     def query(
         self,
@@ -173,6 +189,11 @@ class AgentPipeline(BasePipelineElement):
         messages: Sequence[ChatMessage] = [],
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
+        if runtime.middleware is None and self.middleware_factory is not None:
+            middleware = self.middleware_factory()
+            middleware.attach_runtime(runtime)
+            runtime.middleware = middleware
+
         logger = Logger().get()
         for element in self.elements:
             query, runtime, env, messages, extra_args = element.query(query, runtime, env, messages, extra_args)
@@ -199,13 +220,18 @@ class AgentPipeline(BasePipelineElement):
         else:
             tool_output_formatter = tool_result_to_str
 
+        execution_guard = ExecutionGuard(
+            high_impact_tools={"send_email", "delete_file", "send_money"},
+            high_impact_keywords={"transfer", "wire"},
+        )
+
         if config.defense is None:
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter, execution_guard=execution_guard), llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = llm_name
             return pipeline
         if config.defense == "tool_filter":
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter, execution_guard=execution_guard), llm])
             if not isinstance(llm, OpenAILLM):
                 raise ValueError("Tool filter is only supported for OpenAI models")
             if llm_name is None:
@@ -224,7 +250,7 @@ class AgentPipeline(BasePipelineElement):
         if config.defense == "transformers_pi_detector":
             tools_loop = ToolsExecutionLoop(
                 [
-                    ToolsExecutor(tool_output_formatter),
+                    ToolsExecutor(tool_output_formatter, execution_guard=execution_guard),
                     TransformersBasedPIDetector(
                         model_name="protectai/deberta-v3-base-prompt-injection-v2",
                         safe_label="SAFE",
@@ -246,7 +272,7 @@ class AgentPipeline(BasePipelineElement):
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         if config.defense == "repeat_user_prompt":
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), InitQuery(), llm])
+            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter, execution_guard=execution_guard), InitQuery(), llm])
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
@@ -258,8 +284,49 @@ class AgentPipeline(BasePipelineElement):
                 "between those symbols."
             )
             delimited_tool_output_formatter = lambda result: f"<<{tool_output_formatter(result)}>>"
-            tools_loop = ToolsExecutionLoop([ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter), llm])
+            tools_loop = ToolsExecutionLoop(
+                [ToolsExecutor(tool_output_formatter=delimited_tool_output_formatter, execution_guard=execution_guard), llm]
+            )
             pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.name = f"{llm_name}-{config.defense}"
+            return pipeline
+        if config.defense == "boundary_formatting":
+            tools_loop = ToolsExecutionLoop(
+                [ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard), llm]
+            )
+            pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.middleware_factory = lambda: DualGuardMiddleware(
+                enable_inbound_boundary=True,
+                enable_outbound_fal=False,
+            )
+            pipeline.name = f"{llm_name}-{config.defense}"
+            return pipeline
+        if config.defense == "sanitization":
+            tools_loop = ToolsExecutionLoop(
+                [
+                    ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard),
+                    llm,
+                ]
+            )
+            pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.middleware_factory = lambda: DualGuardMiddleware(
+                enable_inbound_boundary=False,
+                enable_outbound_fal=True,
+            )
+            pipeline.name = f"{llm_name}-{config.defense}"
+            return pipeline
+        if config.defense == "dual_guard":
+            tools_loop = ToolsExecutionLoop(
+                [
+                    ToolsExecutor(tool_output_formatter=tool_output_formatter, execution_guard=execution_guard),
+                    llm,
+                ]
+            )
+            pipeline = cls([system_message_component, init_query_component, llm, tools_loop])
+            pipeline.middleware_factory = lambda: DualGuardMiddleware(
+                enable_inbound_boundary=True,
+                enable_outbound_fal=True,
+            )
             pipeline.name = f"{llm_name}-{config.defense}"
             return pipeline
         raise ValueError("Invalid defense name")

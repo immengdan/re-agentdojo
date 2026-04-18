@@ -20,7 +20,8 @@ class InitQuery(BasePipelineElement):
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
         if len(messages) > 2 or (len(messages) == 1 and messages[0]["role"] != "system"):
             warnings.warn("The query is not being added as the first message or after the system message")
-        query_message = ChatUserMessage(role="user", content=[text_content_block_from_string(query)])
+        guarded_query = runtime.protect_user_query(query)
+        query_message = ChatUserMessage(role="user", content=[text_content_block_from_string(guarded_query)])
         messages = [*messages, query_message]
         return query, runtime, env, messages, extra_args
 

@@ -1,14 +1,15 @@
 #!/bin/bash
-# Run AgentDojo with Sanitization defense AND tool_knowledge attack
+# Run AgentDojo with Dual Guard defense AND tool_knowledge attack
 # Usage: bash scripts/run_config_4.sh
 set -e
 MODEL="GPT_4O_MINI_2024_07_18"
+#MODEL="gpt-3.5-turbo-0125"
 SUITE="workspace"
 ATTACK="tool_knowledge"
-DEFENSE="sanitization"
-LOGDIR="./results/config_4_sanitization"
+DEFENSE="dual_guard"
+LOGDIR="./results/config_dual_guard"
 TASKS="-ut user_task_0 -ut user_task_1 -ut user_task_2 -ut user_task_3 -ut user_task_4 -ut user_task_5 -ut user_task_6 -ut user_task_7 -ut user_task_8 -ut user_task_9"
-echo "=== AgentDojo Config 4 (Defense: $DEFENSE, Attack: $ATTACK) ==="
+echo "=== AgentDojo Dual Guard Config (Defense: $DEFENSE, Attack: $ATTACK) ==="
 echo "Model:   $MODEL"
 echo "Suite:   $SUITE"
 echo "Defense: $DEFENSE"
@@ -22,6 +23,7 @@ PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agentdojo.scripts.be
     --model "$MODEL" \
     --attack "$ATTACK" \
     --defense "$DEFENSE" \
+    --force-rerun \
     --logdir "$LOGDIR"
 echo ""
 echo "=== Done! Results saved to $LOGDIR ==="

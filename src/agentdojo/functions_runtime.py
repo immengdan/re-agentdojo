@@ -217,6 +217,17 @@ class DualGuardMiddleware:
         self.enable_outbound_fal = enable_outbound_fal
         self.audit_log: list[dict[str, Any]] = []
         self.logger = logging.getLogger(__name__)
+        self.current_query_intents: set[str] = set()
+        self.current_trusted_email: str | None = None
+
+    def set_query_context(
+        self,
+        *,
+        trusted_query_intents: set[str] | None = None,
+        trusted_email: str | None = None,
+    ) -> None:
+        self.current_query_intents = trusted_query_intents or set()
+        self.current_trusted_email = trusted_email
 
     def attach_runtime(self, runtime: FunctionsRuntime) -> None:
         """Attach the middleware to a runtime after initialization."""
@@ -323,6 +334,9 @@ class DualGuardMiddleware:
         return min(risk_score, 1.0)
 
     def _guard_tool_output(self, output: FunctionReturnType) -> tuple[FunctionReturnType, float | None]:
+        if "forward_content" in self.current_query_intents:
+            return output, None
+
         if isinstance(output, str):
             lexical = self._lexical_sanitize(output)
             risk_score = self.detect_imperative_tone(lexical)
@@ -354,6 +368,8 @@ class DualGuardMiddleware:
 
     def _transform_nested_value(self, value: Any) -> Any:
         if isinstance(value, str):
+            if "forward_content" in self.current_query_intents:
+                return value
             lexical = self._lexical_sanitize(value)
             if self.detect_imperative_tone(lexical) > self.risk_threshold:
                 return self._fal_encode(lexical)

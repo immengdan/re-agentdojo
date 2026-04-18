@@ -23,6 +23,7 @@ PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agentdojo.scripts.be
     --model "$MODEL" \
     --attack "$ATTACK" \
     --defense "$DEFENSE" \
+    --force-rerun \
     --logdir "$LOGDIR"
 echo ""
 echo "=== Done! Results saved to $LOGDIR ==="

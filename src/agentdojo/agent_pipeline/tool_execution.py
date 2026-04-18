@@ -16,6 +16,8 @@ from agentdojo.types import ChatMessage, ChatToolResultMessage, text_content_blo
 class ExecutionGuard:
     """Hard runtime guard that blocks risky tool calls using untrusted argument provenance."""
 
+    EMAIL_PATTERN = re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")
+
     def __init__(
         self,
         high_impact_tools: set[str] | None = None,
@@ -23,15 +25,43 @@ class ExecutionGuard:
     ) -> None:
         self.high_impact_tools = high_impact_tools or {"send_email", "delete_file", "send_money"}
         self.high_impact_keywords = high_impact_keywords or {"transfer", "wire"}
+        self.current_query_snippets: set[str] = set()
+        self.current_query_intents: set[str] = set()
+        self.current_trusted_email: str | None = None
+
+    def set_query_context(
+        self,
+        *,
+        trusted_query_snippets: set[str] | None = None,
+        trusted_query_intents: set[str] | None = None,
+        trusted_email: str | None = None,
+    ) -> None:
+        self.current_query_snippets = trusted_query_snippets or set()
+        self.current_query_intents = trusted_query_intents or set()
+        self.current_trusted_email = trusted_email
 
     def should_block(
         self,
         tool_name: str,
         arguments: dict,
         untrusted_snippets: set[str],
+        trusted_query_snippets: set[str] | None = None,
+        trusted_query_intents: set[str] | None = None,
     ) -> tuple[bool, str]:
         if not self._is_high_impact_tool(tool_name):
             return False, ""
+
+        trusted_query_snippets = trusted_query_snippets or self.current_query_snippets
+        trusted_query_intents = trusted_query_intents or self.current_query_intents
+
+        if tool_name.lower() == "send_email":
+            return self._should_block_send_email(
+                arguments,
+                untrusted_snippets,
+                trusted_query_snippets,
+                trusted_query_intents,
+                self.current_trusted_email,
+            )
 
         flat_values = self._flatten_argument_values(arguments)
         for value in flat_values:
@@ -46,6 +76,89 @@ class ExecutionGuard:
                         "from untrusted tool output. Require explicit user confirmation or trusted source.",
                     )
         return False, ""
+
+    def _should_block_send_email(
+        self,
+        arguments: dict,
+        untrusted_snippets: set[str],
+        trusted_query_snippets: set[str],
+        trusted_query_intents: set[str],
+        trusted_email: str | None,
+    ) -> tuple[bool, str]:
+        normalized_recipients = [self._normalize(value) for value in self._flatten_argument_values(arguments.get("recipients"))]
+        untrusted_emails = {
+            snippet for snippet in untrusted_snippets if self.EMAIL_PATTERN.fullmatch(snippet)
+        }
+        trusted_query_emails = {
+            snippet for snippet in trusted_query_snippets if self.EMAIL_PATTERN.fullmatch(snippet)
+        }
+
+        for recipient in normalized_recipients:
+            if trusted_email is not None and recipient == self._normalize(trusted_email):
+                return False, ""
+            if recipient and recipient in untrusted_emails and recipient not in trusted_query_emails:
+                return (
+                    True,
+                    "Blocked by ExecutionGuard: high-impact tool arguments appear to originate "
+                    "from untrusted tool output. Require explicit user confirmation or trusted source.",
+                )
+
+        if "forward_content" in trusted_query_intents:
+            return False, ""
+
+        # Keep subject/body checks stricter to reduce false positives from generic overlap.
+        risky_text_markers = {
+            snippet for snippet in untrusted_snippets if len(snippet) >= 24 and not self.EMAIL_PATTERN.fullmatch(snippet)
+        }
+        for value in self._flatten_argument_values(arguments.get("subject")) + self._flatten_argument_values(
+            arguments.get("body")
+        ):
+            normalized_value = self._normalize(value)
+            for marker in risky_text_markers:
+                if marker in normalized_value and any(
+                    keyword in normalized_value for keyword in ("security code", "password", "reset")
+                ):
+                    return (
+                        True,
+                        "Blocked by ExecutionGuard: high-impact tool arguments appear to originate "
+                        "from untrusted tool output. Require explicit user confirmation or trusted source.",
+                    )
+
+        return False, ""
+
+    def extract_trusted_query_snippets(self, query: str) -> set[str]:
+        if not query:
+            return set()
+        return {self._normalize(match) for match in re.findall(self.EMAIL_PATTERN, query)}
+
+    def extract_trusted_query_intents(self, query: str) -> set[str]:
+        if not query:
+            return set()
+
+        normalized = self._normalize(query)
+        intents = set()
+        content_forwarding_patterns = (
+            r"\b(email|send)\b.*\b(content|contents|body|bodies|text)\b",
+            r"\b(send|email)\b.*\b(files?|attachments?)\b",
+            r"\bsend individual emails\b",
+            r"\bsend the body of the email\b",
+            r"\bemail the contents of all unread emails\b",
+            r"\bemail the contents of all received and sent emails\b",
+            r"\bemail the contents of the five largest files\b",
+            r"\bemail the contents of all the files\b",
+        )
+        if any(re.search(pattern, normalized) for pattern in content_forwarding_patterns):
+            intents.add("forward_content")
+        self_email_patterns = (
+            r"\bmy own email address\b",
+            r"\bto myself\b",
+            r"\bto my email address\b",
+            r"\bsend an email to my own email address\b",
+            r"\bsend an email to my email address\b",
+        )
+        if any(re.search(pattern, normalized) for pattern in self_email_patterns):
+            intents.add("self_email")
+        return intents
 
     def extract_untrusted_snippets(self, content_blocks: list[dict] | None) -> set[str]:
         if not content_blocks:
@@ -95,8 +208,7 @@ class ExecutionGuard:
                 snippets.append(normalized)
 
         # Preserve token-level provenance markers that are commonly reused in risky calls.
-        email_pattern = r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
-        snippets.extend(self._normalize(match) for match in re.findall(email_pattern, text))
+        snippets.extend(self._normalize(match) for match in re.findall(self.EMAIL_PATTERN, text))
 
         if len(snippets) == 0:
             normalized = self._normalize(text)
@@ -170,8 +282,27 @@ class ToolsExecutor(BasePipelineElement):
             return query, runtime, env, messages, extra_args
 
         tool_call_results = []
-        guard_state = extra_args.setdefault("_execution_guard", {"untrusted_snippets": set()})
+        guard_state = extra_args.setdefault(
+            "_execution_guard",
+            {"untrusted_snippets": set(), "trusted_query_snippets": set(), "trusted_query_intents": set()},
+        )
         if self.execution_guard is not None:
+            if len(guard_state["trusted_query_snippets"]) == 0:
+                guard_state["trusted_query_snippets"].update(
+                    self.execution_guard.extract_trusted_query_snippets(query)
+                )
+            if len(guard_state["trusted_query_intents"]) == 0:
+                guard_state["trusted_query_intents"].update(
+                    self.execution_guard.extract_trusted_query_intents(query)
+                )
+            trusted_email = None
+            if hasattr(env, "inbox") and hasattr(env.inbox, "account_email"):
+                trusted_email = env.inbox.account_email
+            self.execution_guard.set_query_context(
+                trusted_query_snippets=guard_state["trusted_query_snippets"],
+                trusted_query_intents=guard_state["trusted_query_intents"],
+                trusted_email=trusted_email,
+            )
             prior_tool_messages = [m for m in messages if m["role"] == "tool"]
             for message in prior_tool_messages:
                 content = message.get("content")
@@ -212,6 +343,8 @@ class ToolsExecutor(BasePipelineElement):
                     tool_call.function,
                     dict(tool_call.args),
                     guard_state["untrusted_snippets"],
+                    guard_state["trusted_query_snippets"],
+                    guard_state["trusted_query_intents"],
                 )
                 if should_block:
                     tool_call_results.append(
